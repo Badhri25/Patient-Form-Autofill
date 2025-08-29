@@ -900,10 +900,15 @@
                 <div>
                     <h3><i class="fas fa-clipboard-list"></i> Sample Forms</h3>
                     <div class="sample-forms">
-                        <div class="sample-form-card" data-form="dental">
-                            <i class="fas fa-tooth form-card-icon"></i>
-                            <div class="form-card-title">Dental Form</div>
-                            <div class="form-card-description">Dental health assessment and treatment planning form</div>
+                        <div class="sample-form-card" data-form="health-exam">
+                            <i class="fas fa-stethoscope form-card-icon"></i>
+                            <div class="form-card-title">Health Exam Form</div>
+                            <div class="form-card-description">Comprehensive medical examination form with vital signs and health metrics</div>
+                        </div>
+                        <div class="sample-form-card" data-form="wic">
+                            <i class="fas fa-baby form-card-icon"></i>
+                            <div class="form-card-title">WIC Form</div>
+                            <div class="form-card-description">Women, Infants, and Children nutritional assistance program form</div>
                         </div>
                     </div>
                 </div>
@@ -987,6 +992,18 @@
         <div class="section-content">
             <div class="field-list" id="fieldList"></div>
             <div style="margin-top: 15px; text-align: center;">
+                <button class="quick-fill-btn" onclick="app.showAllFieldNames()" style="margin-right: 10px;">
+                    <i class="fas fa-list"></i> Show All Field Names
+                </button>
+                <button class="quick-fill-btn" onclick="app.createCustomMappings()" style="margin-right: 10px;">
+                    <i class="fas fa-cog"></i> Create Custom Mappings
+                </button>
+                <button class="quick-fill-btn" onclick="app.debugFieldMapping()" style="margin-right: 10px;">
+                    <i class="fas fa-bug"></i> Debug Field Mapping
+                </button>
+                <button class="quick-fill-btn" onclick="app.testFieldFilling()" style="margin-right: 10px;">
+                    <i class="fas fa-vial"></i> Test Field Filling
+                </button>
                 <button class="quick-fill-btn" onclick="document.getElementById('debugSection').classList.add('hidden')">
                     <i class="fas fa-times"></i> Close Debug View
                 </button>
@@ -1191,7 +1208,11 @@
                 heightInCm: heightFeet && heightInches ? Math.round((parseInt(heightFeet) * 12 + parseInt(heightInches)) * 2.54) : '',
                 weightInKg: weight ? Math.round(weight * 0.453592) : '',
                 age: birthday ? this.calculateAge(birthday) : '',
-                bmi: this.calculateBMI(heightFeet, heightInches, weight)
+                bmi: this.calculateBMI(heightFeet, heightInches, weight),
+                // Multiple date formats for different PDF forms
+                birthdayFormatted: birthday ? this.formatDateForPDF(birthday) : '',
+                birthdayMMDDYYYY: birthday ? this.formatDateMMDDYYYY(birthday) : '',
+                birthdayDDMMYYYY: birthday ? this.formatDateDDMMYYYY(birthday) : ''
             };
 
             this.updateProcessSection();
@@ -1220,6 +1241,34 @@
             const bmi = weightKg / (heightM * heightM);
             
             return Math.round(bmi * 10) / 10;
+        }
+
+        formatDateForPDF(dateString) {
+            if (!dateString) return '';
+            const date = new Date(dateString);
+            return date.toLocaleDateString('en-US', {
+                month: '2-digit',
+                day: '2-digit',
+                year: 'numeric'
+            });
+        }
+
+        formatDateMMDDYYYY(dateString) {
+            if (!dateString) return '';
+            const date = new Date(dateString);
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const year = date.getFullYear();
+            return `${month}/${day}/${year}`;
+        }
+
+        formatDateDDMMYYYY(dateString) {
+            if (!dateString) return '';
+            const date = new Date(dateString);
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const year = date.getFullYear();
+            return `${day}/${month}/${year}`;
         }
 
         quickFill(patientType) {
@@ -1304,7 +1353,7 @@
             }, 50);
         }
 
-        selectSampleForm(formType) {
+        async selectSampleForm(formType) {
             // Clear previous selections with animation
             document.querySelectorAll('.sample-form-card').forEach(card => {
                 card.classList.remove('selected');
@@ -1320,19 +1369,64 @@
             document.getElementById('fileInfo').style.display = 'none';
 
             this.selectedForm = formType;
+            
+            try {
+                // Load the actual PDF file
+                this.updateStatus('Loading sample form...', 'processing');
+                const pdfPath = `sample-forms/${formType === 'health-exam' ? 'health-exam-form.pdf' : 'wicform.pdf'}`;
+                
+                const response = await fetch(pdfPath);
+                if (!response.ok) {
+                    throw new Error(`Failed to load PDF: ${response.statusText}`);
+                }
+                
+                const arrayBuffer = await response.arrayBuffer();
+                this.pdfDoc = await PDFLib.PDFDocument.load(arrayBuffer);
+                
+                // Analyze the PDF fields
+                const form = this.pdfDoc.getForm();
+                const fields = form.getFields();
+                const analysis = this.performFieldAnalysis(fields);
+                
+                // Check if WIC Form has no fields and create a fillable one
+                if (formType === 'wic' && fields.length === 0) {
+                    this.updateStatus('WIC Form has no fillable fields. Creating a fillable version...', 'processing');
+                    await this.createFillableWICForm();
+                    
+                    // After creating the fillable form, analyze it again
+                    const newForm = this.pdfDoc.getForm();
+                    const newFields = newForm.getFields();
+                    const newAnalysis = this.performFieldAnalysis(newFields);
+                    
+                    // Show debug info for the new fillable form
+                    this.showAdvancedDebugInfo(newFields, newAnalysis);
+                    
+                    // Update confidence score
+                    document.getElementById('confidenceDisplay').textContent = newAnalysis.confidence + '%';
+                    
+                    this.updateStatus('✅ Fillable WIC Form created and loaded! The form is now ready for auto-filling.', 'success');
+                    this.updateProcessSection();
+                    this.checkReadyToProcess();
+                    return;
+                }
+                
+                // Show debug info for sample forms
+                this.showAdvancedDebugInfo(fields, analysis);
+                
+                // Update confidence score
+                document.getElementById('confidenceDisplay').textContent = analysis.confidence + '%';
+                
+                this.updateStatus(`Loaded: ${formType === 'health-exam' ? 'Health Exam Form' : 'WIC Form'}`, 'success');
+                
+            } catch (error) {
+                console.error('Error loading sample form:', error);
+                this.updateStatus(`Error loading ${formType} form: ${error.message}`, 'error');
+                // Fallback to generated form
+                this.pdfDoc = null;
+            }
+            
             this.updateProcessSection();
             this.checkReadyToProcess();
-            
-            const formNames = {
-                'health-exam': 'Health Examination Form',
-                'wic': 'WIC Nutritional Form',
-                'dental': 'Dental Assessment Form'
-            };
-            
-            this.updateStatus(`Selected: ${formNames[formType]}`, 'success');
-            
-            // Show confidence for sample forms
-            document.getElementById('confidenceDisplay').textContent = '95%';
         }
 
         handleDragOver(e) {
@@ -1496,13 +1590,21 @@
             fields.forEach((field, index) => {
                 const mapping = analysis.mappings[field.getName()] || 'unmapped';
                 const indicator = mapping !== 'unmapped' ? '✅' : '❌';
-                debugText += `${indicator} ${index + 1}. ${field.getName()} → ${mapping}\n`;
+                const fieldType = field.constructor.name;
+                debugText += `${indicator} ${index + 1}. ${field.getName()} (${fieldType}) → ${mapping}\n`;
             });
             
             debugText += `\n💡 MAPPING STRATEGY:\n`;
-            debugText += `System uses fuzzy matching with 50+ field name patterns.\n`;
-            debugText += `Supports text fields, dropdowns, and checkboxes.\n`;
+            debugText += `System uses exact field name matching first, then case-insensitive,\n`;
+            debugText += `then partial matching as fallback.\n`;
+            debugText += `Supports text fields, dropdowns, checkboxes, and radio buttons.\n`;
             debugText += `Additional calculated fields: BMI, Age, Height in CM, Weight in KG\n`;
+            
+            // Add form-specific information
+            if (this.selectedForm) {
+                debugText += `\n📋 FORM TYPE: ${this.selectedForm === 'health-exam' ? 'Health Examination Form' : 'WIC Nutritional Form'}\n`;
+                debugText += `Using form-specific field mappings for better accuracy.\n`;
+            }
             
             fieldList.textContent = debugText;
             debugSection.classList.remove('hidden');
@@ -1531,8 +1633,7 @@
             if (this.selectedForm) {
                 const formNames = {
                     'health-exam': 'Health Examination Form',
-                    'wic': 'WIC Nutritional Form',
-                    'dental': 'Dental Assessment Form'
+                    'wic': 'WIC Nutritional Form'
                 };
                 return formNames[this.selectedForm] || this.selectedForm;
             } else if (this.uploadedFile) {
@@ -1609,7 +1710,7 @@
             const mappings = this.createAdvancedFieldMappings(fields);
             
             // Fill PDF fields with enhanced data
-            const filledFields = this.fillPDFFieldsAdvanced(form, mappings);
+                            const filledFields = await this.fillPDFFieldsAdvanced(form, mappings);
 
             // Generate filename with timestamp
             const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
@@ -1628,118 +1729,41 @@
         }
 
         async processSampleFormAdvanced() {
-            // Create enhanced sample PDF with more detailed information
-            const pdfDoc = await PDFLib.PDFDocument.create();
-            const page = pdfDoc.addPage([612, 792]); // Letter size
-            
-            const { width, height } = page.getSize();
-            
-            // Header with form type
-            const formTitles = {
-                'health-exam': 'HEALTH EXAMINATION FORM',
-                'wic': 'WIC NUTRITIONAL ASSESSMENT FORM',
-                'dental': 'DENTAL HEALTH ASSESSMENT FORM'
-            };
-            
-            page.drawText(formTitles[this.selectedForm] || 'MEDICAL FORM', {
-                x: 50,
-                y: height - 50,
-                size: 20,
-            });
-            
-            page.drawText('FILLED AUTOMATICALLY BY STUX TECHNOLOGIES SYSTEM', {
-                x: 50,
-                y: height - 75,
-                size: 12,
-            });
-            
-            // Patient information section
-            const data = this.patientData;
-            const patientInfo = [
-                '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
-                'PATIENT INFORMATION',
-                '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
-                '',
-                `Full Name: ${data.fullName}`,
-                `Height: ${data.heightString} (${data.heightInCm} cm)`,
-                `Weight: ${data.weight} lbs (${data.weightInKg} kg)`,
-                `Date of Birth: ${data.birthday ? new Date(data.birthday).toLocaleDateString() : 'Not provided'}`,
-                `Age: ${data.age ? data.age + ' years' : 'Not calculated'}`,
-                `BMI: ${data.bmi ? data.bmi + ' kg/m²' : 'Not calculated'}`,
-                '',
-                '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
-                'FORM DETAILS',
-                '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
-                '',
-                `Form Type: ${this.selectedForm}`,
-                `Processing Date: ${new Date().toLocaleString()}`,
-                `System Version: Advanced v2.0`,
-                `Confidence Score: 95%`,
-                '',
-                '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
-                'FIELD MAPPING DEMONSTRATION',
-                '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
-                '',
-                'This form demonstrates that the SAME patient data',
-                'can be successfully applied to DIFFERENT forms',
-                'regardless of field naming conventions.',
-                '',
-                'Supported field variations include:',
-                '• first_name, firstname, fname, given_name',
-                '• last_name, lastname, surname, family_name',
-                '• height, ht, stature, patient_height',
-                '• weight, wt, mass, body_weight',
-                '• birthday, dob, birth_date, date_of_birth',
-                '',
-                'Additional calculated fields:',
-                '• BMI (Body Mass Index)',
-                '• Age calculation from birth date',
-                '• Height conversion to centimeters',
-                '• Weight conversion to kilograms',
-                '',
-                '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
-                'TECHNICAL SPECIFICATIONS',
-                '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
-                '',
-                '✓ 100% Client-side processing (offline capable)',
-                '✓ PDF-lib powered form field detection',
-                '✓ Intelligent fuzzy matching algorithm',
-                '✓ Support for text fields, dropdowns, checkboxes',
-                '✓ Real-time validation and error handling',
-                '✓ Cross-browser compatibility',
-                '✓ Responsive design for mobile devices',
-                '✓ HIPAA-compliant (no data transmission)',
-                '',
-                `Generated by Stux Technologies Patient Form Autofill System`
-            ];
-            
-            patientInfo.forEach((line, index) => {
-                const yPos = height - 120 - (index * 18);
-                const fontSize = line.includes('━') ? 10 : (line === line.toUpperCase() && line.length < 50) ? 14 : 11;
-                const isBold = line.includes('━') || line === line.toUpperCase();
+            if (!this.pdfDoc) {
+                this.updateStatus('Error: No PDF loaded for sample form', 'error');
+                return;
+            }
+
+            try {
+                const form = this.pdfDoc.getForm();
+                const fields = form.getFields();
                 
-                if (yPos > 50) { // Only draw if within page bounds
-                    page.drawText(line, {
-                        x: 50,
-                        y: yPos,
-                        size: fontSize,
-                    });
-                }
-            });
+                // Create enhanced field mappings for specific forms
+                const mappings = this.createSampleFormFieldMappings(fields);
+                
+                // Fill PDF fields with enhanced data
+                const filledFields = await this.fillPDFFieldsAdvanced(form, mappings);
 
-            // Generate filename with timestamp
-            const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
-            const filename = `${data.firstName}_${data.lastName}_${this.selectedForm}_${timestamp}.pdf`;
+                // Generate filename with timestamp
+                const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
+                const formFileName = this.selectedForm === 'health-exam' ? 'health-exam-form' : 'wicform';
+                const filename = `${this.patientData.firstName}_${this.patientData.lastName}_${formFileName}_filled_${timestamp}.pdf`;
 
-            const pdfBytes = await pdfDoc.save();
-            this.downloadPDF(pdfBytes, filename);
-            
-            this.updateStatus(`✅ Success! Generated ${filename}`, 'success');
-            this.addSuccessAnimation();
-            
-            // Update statistics
-            this.stats.fieldsMapped += 10; // Sample forms have ~10 conceptual fields
-            this.updateStatsDisplay();
+                // Save and download
+                const pdfBytes = await this.pdfDoc.save();
+                this.downloadPDF(pdfBytes, filename);
+                
+                this.updateStatus(`✅ Success! Filled ${filledFields} fields in ${filename}`, 'success');
+                this.addSuccessAnimation();
+                
+                // Update statistics
+                this.stats.fieldsMapped += filledFields;
+                this.updateStatsDisplay();
+                
+            } catch (error) {
+                console.error('Error processing sample form:', error);
+                this.updateStatus(`Error processing form: ${error.message}`, 'error');
+            }
         }
 
         createAdvancedFieldMappings(fields) {
@@ -1816,44 +1840,378 @@
             return mappings;
         }
 
-        fillPDFFieldsAdvanced(form, mappings) {
-            let filledCount = 0;
+        createSampleFormFieldMappings(fields) {
+            const mappings = {};
+            
+            // Get all field names for debugging
+            const allFieldNames = fields.map(f => f.getName());
+            console.log(`All field names in ${this.selectedForm} form:`, allFieldNames);
+            
+            // Enhanced field mapping approach for both forms
+            const fieldMappings = {
+                'health-exam': {
+                    // Actual field names from Health Exam Form
+                    'Name': this.patientData.fullName,
+                    'DOB': this.patientData.birthdayFormatted,
+                    'Height': this.patientData.heightString,
+                    'Weight': this.patientData.weight,
+                    'BMI': this.patientData.bmi,
+                    // Additional variations
+                    'name': this.patientData.fullName,
+                    'dob': this.patientData.birthdayFormatted,
+                    'height': this.patientData.heightString,
+                    'weight': this.patientData.weight,
+                    'bmi': this.patientData.bmi,
+                    // Common patterns as fallback
+                    'first_name': this.patientData.firstName,
+                    'last_name': this.patientData.lastName,
+                    'full_name': this.patientData.fullName,
+                    'patient_name': this.patientData.fullName,
+                    'birth_date': this.patientData.birthdayFormatted,
+                    'date_of_birth': this.patientData.birthdayFormatted,
+                    'age': this.patientData.age,
+                    'fname': this.patientData.firstName,
+                    'lname': this.patientData.lastName,
+                    'given_name': this.patientData.firstName,
+                    'family_name': this.patientData.lastName,
+                    'surname': this.patientData.lastName,
+                    'forename': this.patientData.firstName,
+                    'ht': this.patientData.heightString,
+                    'wt': this.patientData.weight,
+                    'stature': this.patientData.heightString,
+                    'mass': this.patientData.weight,
+                    'body_weight': this.patientData.weight,
+                    'patient_weight': this.patientData.weight,
+                    'patient_height': this.patientData.heightString,
+                    'birthday': this.patientData.birthdayFormatted,
+                    'birth_day': this.patientData.birthdayFormatted,
+                    'years_old': this.patientData.age,
+                    'yrs': this.patientData.age,
+                    'years': this.patientData.age,
+                    'body_mass_index': this.patientData.bmi,
+                    'mass_index': this.patientData.bmi,
+                    'bm_index': this.patientData.bmi
+                },
+                'wic': {
+                    // Fillable WIC Form field names (created by our tool)
+                    'participant_name': this.patientData.fullName,
+                    'date_of_birth': this.patientData.birthdayFormatted,
+                    'age': this.patientData.age,
+                    'height': this.patientData.heightString,
+                    'weight': this.patientData.weight,
+                    'bmi': this.patientData.bmi,
+                    'contact_info': `${this.patientData.fullName} - Contact Info`,
+                    'emergency_contact': `Emergency Contact for ${this.patientData.fullName}`,
+                    'assessment_date': new Date().toLocaleDateString(),
+                    'provider_signature': 'Healthcare Provider',
+                    'signature_date': new Date().toLocaleDateString(),
+                    // Additional common patterns for any WIC form
+                    'first_name': this.patientData.firstName,
+                    'last_name': this.patientData.lastName,
+                    'name': this.patientData.fullName,
+                    'full_name': this.patientData.fullName,
+                    'client_name': this.patientData.fullName,
+                    'participant': this.patientData.fullName,
+                    'client': this.patientData.fullName,
+                    'wic_participant': this.patientData.fullName,
+                    'wic_client': this.patientData.fullName,
+                    'birth_date': this.patientData.birthdayFormatted,
+                    'dob': this.patientData.birthdayFormatted,
+                    'date_of_birth': this.patientData.birthdayFormatted,
+                    'fname': this.patientData.firstName,
+                    'lname': this.patientData.lastName,
+                    'given_name': this.patientData.firstName,
+                    'family_name': this.patientData.lastName,
+                    'surname': this.patientData.lastName,
+                    'forename': this.patientData.firstName,
+                    'ht': this.patientData.heightString,
+                    'wt': this.patientData.weight,
+                    'stature': this.patientData.heightString,
+                    'mass': this.patientData.weight,
+                    'body_weight': this.patientData.weight,
+                    'patient_weight': this.patientData.weight,
+                    'patient_height': this.patientData.heightString,
+                    'birthday': this.patientData.birthdayFormatted,
+                    'birth_day': this.patientData.birthdayFormatted,
+                    'years_old': this.patientData.age,
+                    'yrs': this.patientData.age,
+                    'years': this.patientData.age,
+                    'body_mass_index': this.patientData.bmi,
+                    'mass_index': this.patientData.bmi,
+                    'bm_index': this.patientData.bmi,
+                    'nutritional_assessment_height': this.patientData.heightString,
+                    'nutritional_assessment_weight': this.patientData.weight
+                }
+            };
 
-            Object.entries(mappings).forEach(([fieldName, value]) => {
+            const formMappings = fieldMappings[this.selectedForm] || {};
+            
+            // Simple matching: try exact match first, then case-insensitive, then partial
+            allFieldNames.forEach(fieldName => {
+                const fieldNameLower = fieldName.toLowerCase();
+                
+                // Try exact match first
+                if (formMappings[fieldName] && formMappings[fieldName] !== '') {
+                    mappings[fieldName] = formMappings[fieldName];
+                    console.log(`✅ Exact match: ${fieldName} → ${formMappings[fieldName]}`);
+                    return;
+                }
+                
+                // Try case-insensitive match
+                Object.entries(formMappings).forEach(([pattern, value]) => {
+                    if (value && value !== '' && fieldNameLower === pattern.toLowerCase()) {
+                        mappings[fieldName] = value;
+                        console.log(`✅ Case-insensitive match: ${fieldName} → ${value}`);
+                        return;
+                    }
+                });
+                
+                // Try partial match if no exact match found
+                if (!mappings[fieldName]) {
+                    Object.entries(formMappings).forEach(([pattern, value]) => {
+                        if (value && value !== '' && 
+                            (fieldNameLower.includes(pattern.toLowerCase()) || 
+                             pattern.toLowerCase().includes(fieldNameLower))) {
+                            mappings[fieldName] = value;
+                            console.log(`✅ Partial match: ${fieldName} → ${value}`);
+                            return;
+                        }
+                    });
+                }
+            });
+
+            // Add specific mappings for the exact field names we know exist
+            if (this.selectedForm === 'health-exam') {
+                // Health Exam Form specific exact mappings
+                if (allFieldNames.includes('Name') && this.patientData.fullName) {
+                    mappings['Name'] = this.patientData.fullName;
+                    console.log(`✅ Direct mapping: Name → ${this.patientData.fullName}`);
+                }
+                if (allFieldNames.includes('DOB') && this.patientData.birthdayFormatted) {
+                    mappings['DOB'] = this.patientData.birthdayFormatted;
+                    console.log(`✅ Direct mapping: DOB → ${this.patientData.birthdayFormatted}`);
+                }
+                if (allFieldNames.includes('Height') && this.patientData.heightString) {
+                    mappings['Height'] = this.patientData.heightString;
+                    console.log(`✅ Direct mapping: Height → ${this.patientData.heightString}`);
+                }
+                if (allFieldNames.includes('Weight') && this.patientData.weight) {
+                    mappings['Weight'] = this.patientData.weight;
+                    console.log(`✅ Direct mapping: Weight → ${this.patientData.weight}`);
+                }
+                if (allFieldNames.includes('BMI') && this.patientData.bmi) {
+                    mappings['BMI'] = this.patientData.bmi;
+                    console.log(`✅ Direct mapping: BMI → ${this.patientData.bmi}`);
+                }
+            }
+
+            console.log(`Sample Form Field Mappings for ${this.selectedForm}:`, mappings);
+            console.log(`Total fields found: ${allFieldNames.length}`);
+            console.log(`Fields mapped: ${Object.keys(mappings).length}`);
+            
+            return mappings;
+        }
+
+        async fillPDFFieldsAdvanced(form, mappings) {
+            let filledCount = 0;
+            const errors = [];
+
+            console.log('🔍 Starting PDF field filling process...');
+            console.log('📋 Mappings to apply:', mappings);
+            console.log('📄 Form type:', this.selectedForm);
+
+            // Try to embed a default font to fix appearance issues
+            try {
+                const pdfDoc = form.getDocument();
+                const helveticaFont = await pdfDoc.embedFont('Helvetica');
+                console.log('✅ Embedded Helvetica font for field appearances');
+            } catch (e) {
+                console.warn('⚠️ Could not embed font, will try alternative approach:', e.message);
+            }
+
+            // Process fields sequentially to handle async operations properly
+            for (const [fieldName, value] of Object.entries(mappings)) {
                 if (value && value !== '') {
                     try {
                         const field = form.getField(fieldName);
                         const fieldType = field.constructor.name;
+                        const isReadOnly = field.isReadOnly();
                         
-                        if (fieldType.includes('Text')) {
-                            field.setText(String(value));
-                            filledCount++;
-                        } else if (fieldType.includes('Dropdown')) {
+                        console.log(`Filling field: ${fieldName} (${fieldType}) with value: ${value}, ReadOnly: ${isReadOnly}`);
+                        
+                        // Skip read-only fields
+                        if (isReadOnly) {
+                            console.warn(`⚠️ Skipping read-only field: ${fieldName}`);
+                            continue;
+                        }
+                        
+                        // Try multiple methods to fill the field
+                        let filled = false;
+                        
+                        // Method 1: Try setText (for text fields)
+                        if (!filled && typeof field.setText === 'function') {
                             try {
-                                field.select(String(value));
+                                console.log(`🔄 Attempting to fill ${fieldName} with "${value}" using setText()`);
+                                field.setText(String(value));
                                 filledCount++;
+                                filled = true;
+                                console.log(`✅ Successfully filled text field: ${fieldName} using setText()`);
                             } catch (e) {
-                                console.warn(`Could not select dropdown value for ${fieldName}:`, e);
-                            }
-                        } else if (fieldType.includes('CheckBox')) {
-                            if (value && value !== '0' && value !== 'false') {
-                                field.check();
-                                filledCount++;
-                            }
-                        } else if (fieldType.includes('RadioGroup')) {
-                            try {
-                                field.select(String(value));
-                                filledCount++;
-                            } catch (e) {
-                                console.warn(`Could not select radio value for ${fieldName}:`, e);
+                                console.warn(`❌ setText failed for ${fieldName}:`, e.message);
                             }
                         }
+                        
+                        // Method 2: Try setValue (alternative method)
+                        if (!filled && typeof field.setValue === 'function') {
+                            try {
+                                field.setValue(String(value));
+                                filledCount++;
+                                filled = true;
+                                console.log(`✅ Successfully filled field: ${fieldName} using setValue()`);
+                            } catch (e) {
+                                console.warn(`❌ setValue failed for ${fieldName}:`, e.message);
+                            }
+                        }
+                        
+                        // Method 3: Handle dropdown fields
+                        if (!filled && typeof field.getOptions === 'function') {
+                            try {
+                                const options = field.getOptions();
+                                console.log(`Dropdown options for ${fieldName}:`, options);
+                                
+                                // Try exact match first
+                                if (options.includes(String(value))) {
+                                    field.select(String(value));
+                                    filledCount++;
+                                    filled = true;
+                                    console.log(`✅ Successfully selected dropdown value: ${fieldName} = ${value}`);
+                                } else {
+                                    // Try case-insensitive match
+                                    const matchingOption = options.find(option => 
+                                        option.toLowerCase() === String(value).toLowerCase()
+                                    );
+                                    if (matchingOption) {
+                                        field.select(matchingOption);
+                                        filledCount++;
+                                        filled = true;
+                                        console.log(`✅ Successfully selected dropdown value (case-insensitive): ${fieldName} = ${matchingOption}`);
+                                    } else {
+                                        console.warn(`⚠️ No matching dropdown option found for ${fieldName} with value: ${value}`);
+                                    }
+                                }
+                            } catch (e) {
+                                console.warn(`❌ Could not select dropdown value for ${fieldName}:`, e);
+                                errors.push(`Dropdown error for ${fieldName}: ${e.message}`);
+                            }
+                        }
+                        
+                        // Method 4: Handle checkbox fields
+                        if (!filled && typeof field.check === 'function') {
+                            try {
+                                if (value && value !== '0' && value !== 'false' && value !== 'no') {
+                                    field.check();
+                                    filledCount++;
+                                    filled = true;
+                                    console.log(`✅ Successfully checked checkbox: ${fieldName}`);
+                                } else {
+                                    field.uncheck();
+                                    filledCount++;
+                                    filled = true;
+                                    console.log(`✅ Successfully unchecked checkbox: ${fieldName}`);
+                                }
+                            } catch (e) {
+                                console.warn(`❌ Could not set checkbox for ${fieldName}:`, e);
+                                errors.push(`Checkbox error for ${fieldName}: ${e.message}`);
+                            }
+                        }
+                        
+                        // Method 5: Handle radio button groups
+                        if (!filled && typeof field.select === 'function' && fieldType.includes('Radio')) {
+                            try {
+                                const options = field.getOptions();
+                                console.log(`Radio options for ${fieldName}:`, options);
+                                
+                                // Try exact match first
+                                if (options.includes(String(value))) {
+                                    field.select(String(value));
+                                    filledCount++;
+                                    filled = true;
+                                    console.log(`✅ Successfully selected radio value: ${fieldName} = ${value}`);
+                                } else {
+                                    // Try case-insensitive match
+                                    const matchingOption = options.find(option => 
+                                        option.toLowerCase() === String(value).toLowerCase()
+                                    );
+                                    if (matchingOption) {
+                                        field.select(matchingOption);
+                                        filledCount++;
+                                        filled = true;
+                                        console.log(`✅ Successfully selected radio value (case-insensitive): ${fieldName} = ${matchingOption}`);
+                                    } else {
+                                        console.warn(`⚠️ No matching radio option found for ${fieldName} with value: ${value}`);
+                                    }
+                                }
+                            } catch (e) {
+                                console.warn(`❌ Could not select radio value for ${fieldName}:`, e);
+                                errors.push(`Radio error for ${fieldName}: ${e.message}`);
+                            }
+                        }
+                        
+                        // Method 6: Try to update appearances after filling (with font handling)
+                        if (filled && typeof field.updateAppearances === 'function') {
+                            try {
+                                // Try to update with a default font
+                                const pdfDoc = form.getDocument();
+                                const helveticaFont = await pdfDoc.embedFont('Helvetica');
+                                field.updateAppearances(helveticaFont);
+                                console.log(`✅ Updated appearances for: ${fieldName} with font`);
+                            } catch (e) {
+                                try {
+                                    // Fallback: try without font
+                                    field.updateAppearances();
+                                    console.log(`✅ Updated appearances for: ${fieldName} (fallback)`);
+                                } catch (e2) {
+                                    console.warn(`⚠️ Could not update appearances for ${fieldName}:`, e2.message);
+                                }
+                            }
+                        }
+                        
+                        if (!filled) {
+                            console.warn(`⚠️ Could not fill field ${fieldName} (${fieldType}) - no suitable method found`);
+                            errors.push(`No suitable filling method for ${fieldName} (${fieldType})`);
+                        }
+                        
                     } catch (error) {
-                        console.warn(`Could not fill field ${fieldName}:`, error);
+                        console.warn(`❌ Could not access field ${fieldName}:`, error);
+                        errors.push(`Field access error for ${fieldName}: ${error.message}`);
                     }
                 }
-            });
+            }
 
+            if (errors.length > 0) {
+                console.warn(`⚠️ Field filling errors:`, errors);
+            }
+
+            console.log(`📊 Field filling summary: ${filledCount} fields filled successfully`);
+            console.log(`📄 Form type: ${this.selectedForm}`);
+            console.log(`📋 Total mappings attempted: ${Object.keys(mappings).length}`);
+            
+            // Force update all field appearances with font handling
+            try {
+                const pdfDoc = form.getDocument();
+                const helveticaFont = await pdfDoc.embedFont('Helvetica');
+                form.updateFieldAppearances(helveticaFont);
+                console.log(`✅ Updated all field appearances with font`);
+            } catch (e) {
+                try {
+                    // Fallback: try without font
+                    form.updateFieldAppearances();
+                    console.log(`✅ Updated all field appearances (fallback)`);
+                } catch (e2) {
+                    console.warn(`⚠️ Could not update all field appearances:`, e2.message);
+                }
+            }
+            
             return filledCount;
         }
 
@@ -1946,6 +2304,321 @@
             }
         }
 
+        showAllFieldNames() {
+            if (!this.pdfDoc) {
+                this.updateStatus('No PDF loaded. Please select a form first.', 'error');
+                return;
+            }
+
+            try {
+                const form = this.pdfDoc.getForm();
+                const fields = form.getFields();
+                const fieldList = document.getElementById('fieldList');
+                
+                let debugText = `ALL FIELD NAMES IN PDF\n`;
+                debugText += `=====================\n\n`;
+                debugText += `📋 FORM: ${this.getFormDisplayName()}\n`;
+                debugText += `📊 TOTAL FIELDS: ${fields.length}\n\n`;
+                
+                debugText += `🔍 FIELD DETAILS:\n`;
+                debugText += `================\n`;
+                
+                fields.forEach((field, index) => {
+                    const fieldName = field.getName();
+                    const fieldType = field.constructor.name;
+                    const fieldTypeShort = fieldType.replace('PDFField', '').replace('PDF', '');
+                    
+                    debugText += `${index + 1}. ${fieldName}\n`;
+                    debugText += `   Type: ${fieldTypeShort}\n`;
+                    
+                    // Show additional info for specific field types
+                    if (fieldType.includes('Dropdown') || fieldType.includes('RadioGroup')) {
+                        try {
+                            const options = field.getOptions();
+                            debugText += `   Options: [${options.join(', ')}]\n`;
+                        } catch (e) {
+                            debugText += `   Options: Error getting options\n`;
+                        }
+                    }
+                    
+                    debugText += `\n`;
+                });
+                
+                debugText += `💡 TIPS:\n`;
+                debugText += `- Use these exact field names for precise mapping\n`;
+                debugText += `- Field names are case-sensitive\n`;
+                debugText += `- Some fields might be read-only or hidden\n`;
+                
+                fieldList.textContent = debugText;
+                document.getElementById('debugSection').classList.remove('hidden');
+                
+            } catch (error) {
+                console.error('Error showing field names:', error);
+                this.updateStatus('Error displaying field names', 'error');
+            }
+        }
+
+        normalizeFieldName(fieldName) {
+            // Remove common prefixes and suffixes
+            let normalized = fieldName
+                .replace(/^(form|field|input|text|txt)_/i, '')
+                .replace(/_(form|field|input|text|txt)$/i, '')
+                .replace(/^(patient|client|participant)_/i, '')
+                .replace(/_(patient|client|participant)$/i, '');
+            
+            // Convert to lowercase and replace spaces/underscores with single space
+            normalized = normalized.toLowerCase()
+                .replace(/[_\s]+/g, ' ')
+                .trim();
+            
+            // Remove common words that don't add meaning
+            normalized = normalized
+                .replace(/\b(form|field|input|text|txt|box|area)\b/g, '')
+                .replace(/\s+/g, ' ')
+                .trim();
+            
+            return normalized;
+        }
+
+        createCustomMappings() {
+            if (!this.pdfDoc) {
+                this.updateStatus('No PDF loaded. Please select a form first.', 'error');
+                return;
+            }
+
+            try {
+                const form = this.pdfDoc.getForm();
+                const fields = form.getFields();
+                const fieldList = document.getElementById('fieldList');
+                
+                let debugText = `CUSTOM FIELD MAPPINGS\n`;
+                debugText += `====================\n\n`;
+                debugText += `📋 FORM: ${this.getFormDisplayName()}\n`;
+                debugText += `📊 TOTAL FIELDS: ${fields.length}\n\n`;
+                
+                debugText += `🔧 SUGGESTED MAPPINGS:\n`;
+                debugText += `====================\n`;
+                
+                // Create suggested mappings based on field names
+                const suggestedMappings = {};
+                
+                fields.forEach((field, index) => {
+                    const fieldName = field.getName();
+                    const fieldType = field.constructor.name;
+                    const fieldNameLower = fieldName.toLowerCase();
+                    
+                    // Suggest mappings based on field name patterns
+                    let suggestedMapping = 'unmapped';
+                    let suggestedValue = '';
+                    
+                    if (fieldNameLower.includes('first') || fieldNameLower.includes('fname') || fieldNameLower.includes('given')) {
+                        suggestedMapping = 'firstName';
+                        suggestedValue = this.patientData.firstName || 'John';
+                    } else if (fieldNameLower.includes('last') || fieldNameLower.includes('lname') || fieldNameLower.includes('surname') || fieldNameLower.includes('family')) {
+                        suggestedMapping = 'lastName';
+                        suggestedValue = this.patientData.lastName || 'Doe';
+                    } else if (fieldNameLower.includes('name') && !fieldNameLower.includes('first') && !fieldNameLower.includes('last')) {
+                        suggestedMapping = 'fullName';
+                        suggestedValue = this.patientData.fullName || 'John Doe';
+                    } else if (fieldNameLower.includes('height') || fieldNameLower.includes('ht') || fieldNameLower.includes('stature')) {
+                        suggestedMapping = 'height';
+                        suggestedValue = this.patientData.heightString || '5\'10"';
+                    } else if (fieldNameLower.includes('weight') || fieldNameLower.includes('wt') || fieldNameLower.includes('mass')) {
+                        suggestedMapping = 'weight';
+                        suggestedValue = this.patientData.weight || '150';
+                    } else if (fieldNameLower.includes('birth') || fieldNameLower.includes('dob') || fieldNameLower.includes('date')) {
+                        suggestedMapping = 'birthday';
+                        suggestedValue = this.patientData.birthdayFormatted || '01/01/1990';
+                    } else if (fieldNameLower.includes('age') || fieldNameLower.includes('years')) {
+                        suggestedMapping = 'age';
+                        suggestedValue = this.patientData.age || '30';
+                    } else if (fieldNameLower.includes('bmi')) {
+                        suggestedMapping = 'bmi';
+                        suggestedValue = this.patientData.bmi || '21.5';
+                    }
+                    
+                    suggestedMappings[fieldName] = { mapping: suggestedMapping, value: suggestedValue };
+                    
+                    const indicator = suggestedMapping !== 'unmapped' ? '✅' : '❌';
+                    debugText += `${indicator} ${index + 1}. ${fieldName}\n`;
+                    debugText += `   Type: ${fieldType.replace('PDFField', '').replace('PDF', '')}\n`;
+                    debugText += `   Suggested: ${suggestedMapping} → ${suggestedValue}\n\n`;
+                });
+                
+                debugText += `💡 CUSTOM MAPPING CODE:\n`;
+                debugText += `======================\n`;
+                debugText += `// Add this to createSampleFormFieldMappings() function:\n`;
+                debugText += `const customMappings = {\n`;
+                
+                Object.entries(suggestedMappings).forEach(([fieldName, mapping]) => {
+                    if (mapping.mapping !== 'unmapped') {
+                        debugText += `    '${fieldName}': this.patientData.${mapping.mapping},\n`;
+                    }
+                });
+                
+                debugText += `};\n`;
+                debugText += `Object.assign(mappings, customMappings);\n`;
+                
+                fieldList.textContent = debugText;
+                document.getElementById('debugSection').classList.remove('hidden');
+                
+            } catch (error) {
+                console.error('Error creating custom mappings:', error);
+                this.updateStatus('Error creating custom mappings', 'error');
+            }
+        }
+
+        debugFieldMapping() {
+            if (!this.pdfDoc) {
+                this.updateStatus('No PDF loaded. Please select a form first.', 'error');
+                return;
+            }
+
+            try {
+                const form = this.pdfDoc.getForm();
+                const fields = form.getFields();
+                const fieldList = document.getElementById('fieldList');
+                
+                let debugText = `FIELD MAPPING DEBUG\n`;
+                debugText += `==================\n\n`;
+                debugText += `📋 FORM: ${this.getFormDisplayName()}\n`;
+                debugText += `📊 TOTAL FIELDS: ${fields.length}\n\n`;
+                
+                // Test the field mapping function
+                const mappings = this.createSampleFormFieldMappings(fields);
+                
+                debugText += `🔍 FIELD MAPPING RESULTS:\n`;
+                debugText += `========================\n`;
+                
+                fields.forEach((field, index) => {
+                    const fieldName = field.getName();
+                    const fieldType = field.constructor.name;
+                    const isMapped = mappings[fieldName];
+                    
+                    const indicator = isMapped ? '✅' : '❌';
+                    debugText += `${indicator} ${index + 1}. ${fieldName}\n`;
+                    debugText += `   Type: ${fieldType.replace('PDFField', '').replace('PDF', '')}\n`;
+                    debugText += `   Mapped: ${isMapped ? `Yes → ${isMapped}` : 'No'}\n\n`;
+                });
+                
+                debugText += `📈 SUMMARY:\n`;
+                debugText += `===========\n`;
+                debugText += `Total Fields: ${fields.length}\n`;
+                debugText += `Mapped Fields: ${Object.keys(mappings).length}\n`;
+                debugText += `Mapping Success Rate: ${Math.round((Object.keys(mappings).length / fields.length) * 100)}%\n\n`;
+                
+                debugText += `💡 PATIENT DATA:\n`;
+                debugText += `===============\n`;
+                debugText += `First Name: ${this.patientData.firstName || 'Not set'}\n`;
+                debugText += `Last Name: ${this.patientData.lastName || 'Not set'}\n`;
+                debugText += `Full Name: ${this.patientData.fullName || 'Not set'}\n`;
+                debugText += `Height: ${this.patientData.heightString || 'Not set'}\n`;
+                debugText += `Weight: ${this.patientData.weight || 'Not set'}\n`;
+                debugText += `Birthday: ${this.patientData.birthdayFormatted || 'Not set'}\n`;
+                debugText += `Age: ${this.patientData.age || 'Not set'}\n`;
+                debugText += `BMI: ${this.patientData.bmi || 'Not set'}\n`;
+                
+                fieldList.textContent = debugText;
+                document.getElementById('debugSection').classList.remove('hidden');
+                
+            } catch (error) {
+                console.error('Error debugging field mapping:', error);
+                this.updateStatus('Error debugging field mapping', 'error');
+            }
+        }
+
+        testFieldFilling() {
+            if (!this.pdfDoc) {
+                this.updateStatus('No PDF loaded. Please select a form first.', 'error');
+                return;
+            }
+
+            try {
+                const form = this.pdfDoc.getForm();
+                const fields = form.getFields();
+                const fieldList = document.getElementById('fieldList');
+                
+                let debugText = `FIELD FILLING TEST\n`;
+                debugText += `==================\n\n`;
+                debugText += `📋 FORM: ${this.getFormDisplayName()}\n`;
+                debugText += `📊 TOTAL FIELDS: ${fields.length}\n\n`;
+                
+                // Test the field mapping function
+                const mappings = this.createSampleFormFieldMappings(fields);
+                
+                debugText += `🔍 FIELD FILLING RESULTS:\n`;
+                debugText += `========================\n`;
+                
+                let filledCount = 0;
+                let errorCount = 0;
+                
+                Object.entries(mappings).forEach(([fieldName, value]) => {
+                    try {
+                        const field = form.getField(fieldName);
+                        const fieldType = field.constructor.name;
+                        
+                        debugText += `Testing: ${fieldName} (${fieldType}) → ${value}\n`;
+                        
+                        if (fieldType.includes('Text')) {
+                            field.setText(String(value));
+                            debugText += `   ✅ Text field filled successfully\n`;
+                            filledCount++;
+                        } else if (fieldType.includes('Dropdown')) {
+                            try {
+                                field.select(String(value));
+                                debugText += `   ✅ Dropdown field filled successfully\n`;
+                                filledCount++;
+                            } catch (e) {
+                                debugText += `   ❌ Dropdown error: ${e.message}\n`;
+                                errorCount++;
+                            }
+                        } else if (fieldType.includes('CheckBox')) {
+                            if (value && value !== '0' && value !== 'false') {
+                                field.check();
+                                debugText += `   ✅ Checkbox checked successfully\n`;
+                                filledCount++;
+                            } else {
+                                field.uncheck();
+                                debugText += `   ✅ Checkbox unchecked successfully\n`;
+                                filledCount++;
+                            }
+                        } else {
+                            debugText += `   ⚠️ Unsupported field type: ${fieldType}\n`;
+                        }
+                    } catch (error) {
+                        debugText += `   ❌ Error filling field: ${error.message}\n`;
+                        errorCount++;
+                    }
+                    debugText += `\n`;
+                });
+                
+                debugText += `📈 SUMMARY:\n`;
+                debugText += `===========\n`;
+                debugText += `Total Mapped Fields: ${Object.keys(mappings).length}\n`;
+                debugText += `Successfully Filled: ${filledCount}\n`;
+                debugText += `Errors: ${errorCount}\n`;
+                debugText += `Success Rate: ${Math.round((filledCount / Object.keys(mappings).length) * 100)}%\n\n`;
+                
+                debugText += `💡 PATIENT DATA:\n`;
+                debugText += `===============\n`;
+                debugText += `First Name: ${this.patientData.firstName || 'Not set'}\n`;
+                debugText += `Last Name: ${this.patientData.lastName || 'Not set'}\n`;
+                debugText += `Full Name: ${this.patientData.fullName || 'Not set'}\n`;
+                debugText += `Height: ${this.patientData.heightString || 'Not set'}\n`;
+                debugText += `Weight: ${this.patientData.weight || 'Not set'}\n`;
+                debugText += `Birthday: ${this.patientData.birthdayFormatted || 'Not set'}\n`;
+                debugText += `Age: ${this.patientData.age || 'Not set'}\n`;
+                debugText += `BMI: ${this.patientData.bmi || 'Not set'}\n`;
+                
+                fieldList.textContent = debugText;
+                document.getElementById('debugSection').classList.remove('hidden');
+                
+            } catch (error) {
+                console.error('Error testing field filling:', error);
+                this.updateStatus('Error testing field filling', 'error');
+            }
+        }
+
         updateStatus(message, type = '') {
             const statusSection = document.getElementById('statusSection');
             const statusText = document.getElementById('statusText');
@@ -1976,6 +2649,201 @@
                         this.updateStatus('Ready to process more forms', 'ready');
                     }
                 }, 5000);
+            }
+        }
+
+        async createFillableWICForm() {
+            try {
+                // Create a new PDF document
+                const pdfDoc = await PDFLib.PDFDocument.create();
+                const page = pdfDoc.addPage([612, 792]); // Standard letter size
+                
+                // Embed fonts
+                const helveticaFont = await pdfDoc.embedFont('Helvetica');
+                const helveticaBold = await pdfDoc.embedFont('Helvetica-Bold');
+                
+                // Define colors
+                const black = PDFLib.rgb(0, 0, 0);
+                const darkBlue = PDFLib.rgb(0.2, 0.4, 0.8);
+                const lightGray = PDFLib.rgb(0.95, 0.95, 0.95);
+                
+                // Add title
+                page.drawText('WIC Nutritional Assessment Form', {
+                    x: 50,
+                    y: 750,
+                    size: 20,
+                    font: helveticaBold,
+                    color: darkBlue
+                });
+                
+                // Add subtitle
+                page.drawText('Women, Infants, and Children Program', {
+                    x: 50,
+                    y: 720,
+                    size: 12,
+                    font: helveticaFont,
+                    color: black
+                });
+                
+                // Add form fields
+                const formFields = [
+                    { name: 'participant_name', label: 'Participant Name:', x: 50, y: 650, width: 200, height: 20 },
+                    { name: 'date_of_birth', label: 'Date of Birth:', x: 50, y: 600, width: 150, height: 20 },
+                    { name: 'age', label: 'Age:', x: 250, y: 600, width: 80, height: 20 },
+                    { name: 'height', label: 'Height:', x: 50, y: 550, width: 120, height: 20 },
+                    { name: 'weight', label: 'Weight:', x: 200, y: 550, width: 120, height: 20 },
+                    { name: 'bmi', label: 'BMI:', x: 350, y: 550, width: 80, height: 20 },
+                    { name: 'contact_info', label: 'Contact Information:', x: 50, y: 500, width: 300, height: 20 },
+                    { name: 'emergency_contact', label: 'Emergency Contact:', x: 50, y: 450, width: 300, height: 20 },
+                    { name: 'assessment_date', label: 'Assessment Date:', x: 50, y: 400, width: 150, height: 20 }
+                ];
+                
+                // Draw labels and create form fields
+                formFields.forEach(field => {
+                    // Draw label
+                    page.drawText(field.label, {
+                        x: field.x,
+                        y: field.y + 15,
+                        size: 10,
+                        font: helveticaBold,
+                        color: black
+                    });
+                    
+                    // Create text field
+                    const textField = pdfDoc.getForm().createTextField(field.name);
+                    textField.addToPage(page, {
+                        x: field.x,
+                        y: field.y,
+                        width: field.width,
+                        height: field.height,
+                        borderWidth: 1,
+                        borderColor: black,
+                        backgroundColor: lightGray,
+                        fontSize: 10,
+                        font: helveticaFont
+                    });
+                });
+                
+                // Add additional sections
+                page.drawText('Nutritional Assessment', {
+                    x: 50,
+                    y: 350,
+                    size: 14,
+                    font: helveticaBold,
+                    color: darkBlue
+                });
+                
+                // Add checkboxes for nutritional status
+                const checkboxes = [
+                    { name: 'nutritional_risk', label: 'Nutritional Risk Identified', x: 50, y: 320 },
+                    { name: 'pregnancy', label: 'Pregnant', x: 50, y: 290 },
+                    { name: 'breastfeeding', label: 'Breastfeeding', x: 50, y: 260 },
+                    { name: 'postpartum', label: 'Postpartum', x: 50, y: 230 }
+                ];
+                
+                checkboxes.forEach(checkbox => {
+                    // Draw label
+                    page.drawText(checkbox.label, {
+                        x: checkbox.x + 20,
+                        y: checkbox.y + 5,
+                        size: 10,
+                        font: helveticaFont,
+                        color: black
+                    });
+                    
+                    // Create checkbox
+                    const checkboxField = pdfDoc.getForm().createCheckBox(checkbox.name);
+                    checkboxField.addToPage(page, {
+                        x: checkbox.x,
+                        y: checkbox.y,
+                        width: 15,
+                        height: 15,
+                        borderWidth: 1,
+                        borderColor: black
+                    });
+                });
+                
+                // Add signature field
+                page.drawText('Healthcare Provider Signature:', {
+                    x: 50,
+                    y: 180,
+                    size: 10,
+                    font: helveticaBold,
+                    color: black
+                });
+                
+                const signatureField = pdfDoc.getForm().createTextField('provider_signature');
+                signatureField.addToPage(page, {
+                    x: 50,
+                    y: 150,
+                    width: 200,
+                    height: 30,
+                    borderWidth: 1,
+                    borderColor: black,
+                    backgroundColor: lightGray,
+                    fontSize: 10,
+                    font: helveticaFont
+                });
+                
+                // Add date field
+                page.drawText('Date:', {
+                    x: 300,
+                    y: 180,
+                    size: 10,
+                    font: helveticaBold,
+                    color: black
+                });
+                
+                const dateField = pdfDoc.getForm().createTextField('signature_date');
+                dateField.addToPage(page, {
+                    x: 300,
+                    y: 150,
+                    width: 100,
+                    height: 20,
+                    borderWidth: 1,
+                    borderColor: black,
+                    backgroundColor: lightGray,
+                    fontSize: 10,
+                    font: helveticaFont
+                });
+                
+                // Save the PDF and replace the current WIC Form
+                const pdfBytes = await pdfDoc.save();
+                
+                // Create a blob and download it
+                const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = 'wicform.pdf';
+                link.style.display = 'none';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(url);
+                
+                // Update the current PDF document
+                this.pdfDoc = pdfDoc;
+                
+                // Analyze the new form
+                const form = this.pdfDoc.getForm();
+                const pdfFields = form.getFields();
+                const analysis = this.performFieldAnalysis(pdfFields);
+                
+                // Show debug info
+                this.showAdvancedDebugInfo(pdfFields, analysis);
+                
+                // Update confidence score
+                document.getElementById('confidenceDisplay').textContent = analysis.confidence + '%';
+                
+                this.updateStatus('✅ Fillable WIC Form created and loaded! The form is now ready for auto-filling. A copy has been downloaded as "wicform.pdf" for your reference.', 'success');
+                
+                this.updateProcessSection();
+                this.checkReadyToProcess();
+                
+            } catch (error) {
+                console.error('Error creating fillable WIC Form:', error);
+                this.updateStatus(`❌ Error creating fillable WIC Form: ${error.message}`, 'error');
             }
         }
     }
