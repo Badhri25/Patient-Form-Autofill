@@ -163,8 +163,30 @@ Patient-Form-Autofill/
 │   ├── NYS THERAPY SERVICES FORM.pdf
 │   ├── ROLLING RIVER DAY CAMP.pdf
 │   └── wicform (1).pdf
+├── downloaded-example-pdf's/  # Generated filled forms for demonstration
+│   ├── Avery_Johnson_health-exam-form_2025-09-01T13-43-43.pdf
+│   ├── Casey_Miller_AIM MEDICAL FORM_2025-09-01T13-45-22.pdf
+│   ├── Jane_Smith_NYC FORM_2025-09-01T13-47-06.pdf
+│   └── Steve_Testing_CAMP DINA FORM_2025-09-01T13-41-47.pdf
 └── README.md                  # This documentation
 ```
+
+## 📁 Generated Forms Directory
+
+The `downloaded-example-pdf's/` directory contains example filled forms that demonstrate the system's capabilities. These files are automatically generated when users process forms and serve as:
+
+- **Demonstration Examples**: Show real-world output quality and formatting
+- **Testing References**: Provide samples for quality assurance and testing
+- **User Guidance**: Illustrate expected output format and naming conventions
+- **System Validation**: Demonstrate successful form processing across different form types
+
+### **Example Output Files**
+- **Avery Johnson**: Health exam form with standard medical field mapping
+- **Casey Miller**: AIM Medical form showcasing complex form handling
+- **Jane Smith**: NYC form demonstrating city-specific form processing
+- **Steve Testing**: Camp Dina form with recreational program field mapping
+
+Each file follows the naming convention: `PatientName_FormName_Timestamp.pdf`
 
 ## ⚠️ Current Limitations
 
